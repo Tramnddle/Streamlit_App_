@@ -11,8 +11,8 @@ from st_files_connection import FilesConnection
 
 import os
 
-secrets = st.secrets["connections.gcs"]
-secret_value = os.environ.get('connections.gcs')
+secrets = st.secrets["connections_gcs"]
+secret_value = os.environ.get('connections_gcs')
 
 # Create a GCS connection
 conn = st.experimental_connection('gcs', type=FilesConnection)
