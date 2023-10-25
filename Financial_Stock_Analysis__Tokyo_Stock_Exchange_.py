@@ -25,9 +25,11 @@ st.dataframe(df)
 
 # Read the CSV file with Dask
 stock_list = conn.read("gs://tokyostockexchange/stock_prices_predict.csv", input_format="csv")
+st.dataframe(stock_list)
 
 # Create a dropdown menu
 Securities_List = st.selectbox('Securities reference list: ', list(stock_list[['SecuritiesCode', 'Name']].itertuples(index=False, name=None)))
+
 
 # Convert the Date column
 df['Date'] = df['Date'].astype('M8[ns]')  # This is the datetime dtype in Dask
