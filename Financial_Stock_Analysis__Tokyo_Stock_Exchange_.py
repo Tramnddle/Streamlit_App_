@@ -24,7 +24,7 @@ df = conn.read("gs://tokyostockexchange/stock_prices.csv", input_format="csv")
 st.dataframe(df)
 
 # Read the CSV file with Dask
-stock_list = conn.read_csv("gs://tokyostockexchange/stock_prices_predict.csv", input_format="csv")
+stock_list = conn.read("gs://tokyostockexchange/stock_prices_predict.csv", input_format="csv")
 
 # Create a dropdown menu
 Securities_List = st.selectbox('Securities reference list: ', list(stock_list[['SecuritiesCode', 'Name']].itertuples(index=False, name=None)))
