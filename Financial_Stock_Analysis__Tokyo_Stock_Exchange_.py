@@ -154,17 +154,16 @@ st.subheader('Candle stick chart in November 2021')
 import plotly.graph_objects as go
 
 def Candlestick(df, Title):
-    # Add a new column 'Color' based on price direction
     df['Color'] = ['green' if close > open else 'red' for close, open in zip(df['Close'], df['Open'])]
     fig = go.Figure(data=[go.Candlestick(x=df.index,
                 open=df['Open'],
                 high=df['High'],
                 low=df['Low'],
                 close=df['Close'],
-                increasing_line_color= 'green',
-                decreasing_line_color= 'red',
-                increasing_fillcolor= 'green',
-                decreasing_fillcolor= 'red',
+                increasing_line_color='green',
+                decreasing_line_color='red',
+                increasing_fillcolor='green',
+                decreasing_fillcolor='red',
                 line=dict(width=1),
                 whiskerwidth=0.2,
                 opacity=0.7,
@@ -175,15 +174,18 @@ def Candlestick(df, Title):
                       xaxis_title='Date',
                       yaxis_title='Price')
 
-    fig.show()
+    return fig
+
+# Assuming you have df and securities_codes defined
 
 # Call the Candlestick function for each securities code
 for code in securities_codes:
     selected_data = df[df['SecuritiesCode'] == int(code)]
     selected_data.index = selected_data.pop('Date')
     selected_data = selected_data.loc['2021-11-01':'2021-12-03']
-    Candlestick(selected_data, f'Candlestick Chart for Securities Code {code}')
-    
+
+    # Use st.plotly_chart to display the Plotly figure in Streamlit
+    st.plotly_chart(Candlestick(selected_data, f'Candlestick Chart for Securities Code {code}'))
 
 # Daily return
 st.subheader('Daily return')
