@@ -176,7 +176,6 @@ def Candlestick(df, Title):
 
     return fig
 
-# Assuming you have df and securities_codes defined
 
 # Call the Candlestick function for each securities code
 for code in securities_codes:
@@ -206,7 +205,7 @@ for code in data_coll['SecuritiesCode'].unique():
     plt.ylabel('Frequency')
     plt.grid(True)
     plt.show()
-    #st.pyplot()
+    st.pyplot()
 
 # Cumulative return
 st.subheader('Cumulative return')
