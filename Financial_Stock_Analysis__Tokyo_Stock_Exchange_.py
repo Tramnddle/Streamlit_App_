@@ -9,7 +9,6 @@ import matplotlib.pyplot as plt
 import streamlit as st
 from st_files_connection import FilesConnection
 
-st.set_option('server.maxMessageSize', 300)
 
 import os
 
