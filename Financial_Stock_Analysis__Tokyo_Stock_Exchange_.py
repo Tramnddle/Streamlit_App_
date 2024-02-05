@@ -204,7 +204,7 @@ for code in data_coll['SecuritiesCode'].unique():
     plt.ylabel('Frequency')
     plt.grid(True)
     plt.show()
-    st.pyplot()
+    #st.pyplot()
 
 # Cumulative return
 st.subheader('Cumulative return')
