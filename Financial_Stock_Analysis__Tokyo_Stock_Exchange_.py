@@ -42,7 +42,8 @@ df['Date'] = df['Date'].astype('M8[ns]')  # This is the datetime dtype in Dask
 st.title('Tokyo Stock Exchange JPX 2017-01-04 to 2021-12-03')
 user_inputs = st.text_area('Enter Stock Codes (comma-separated)', '6752, 6753, 6503')  # Example input
 
-st.set_option('deprecation.showPyplotGlobalUse', False)
+#st.set_option('deprecation.showPyplotGlobalUse', False)
+print(st.config.get_option('deprecation.showPyplotGlobalUse'))
 
 securities_codes = user_inputs.split(',')
 
