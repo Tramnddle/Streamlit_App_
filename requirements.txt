@@ -7,3 +7,4 @@ plotly>=5.18
 google-cloud-storage>=2.12.0
 google-auth>=2.20
 dask>=2023.3.2  # if using Dask for large CSVs
+gcsfs
