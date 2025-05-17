@@ -1,9 +1,9 @@
 streamlit
-st-files-connection>=0.0.5
-pandas>=1.5
-numpy>=1.21
-matplotlib>=3.5
-plotly>=5.18
+st-files-connection
+pandas
+numpy
+matplotlib
+plotly
 google-cloud-storage>=2.12.0
-google-auth>=2.20
+google-auth
 gcsfs
