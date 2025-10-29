@@ -21,11 +21,11 @@ import os
 conn = st.connection('gcs', type=FilesConnection)
 
 # Read data from GCS
-df = conn.read("gs://tokyostockexchange/stock_prices.csv", input_format="csv")
-stock_list = conn.read("gs://tokyostockexchange/stock_list.csv", input_format="csv")
+df = conn.read("gs://tokyostockexchange/stock_prices.csv", input_format="csv", encoding="utf-8")
+stock_list = conn.read("gs://tokyostockexchange/stock_list.csv", input_format="csv", encoding="utf-8")
 
 # Convert Date to datetime
-df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+df['Date'] = pd.to_datetime(df['Date'], encoding="utf-8")
 
 st.title('Tokyo Stock Exchange JPX (2017-01-04 to 2021-12-03)')
 
