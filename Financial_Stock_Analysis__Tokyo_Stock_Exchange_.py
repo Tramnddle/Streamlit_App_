@@ -3,12 +3,11 @@ import subprocess
 # Install required packages from requirements.txt
 subprocess.call("pip install -r requirements.txt", shell=True)
 
-import warnings
-warnings.filterwarnings("ignore")
-
 import streamlit as st
-st.set_option('deprecation.showfileUploaderEncoding', False)
-
+import warnings
+import logging
+warnings.filterwarnings("ignore")
+logging.getLogger("streamlit").setLevel(logging.ERROR)
 
 import numpy as np
 import pandas as pd
