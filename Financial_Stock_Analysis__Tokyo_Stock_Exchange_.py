@@ -10,22 +10,19 @@ import matplotlib.pyplot as plt
 import gcsfs
 from st_files_connection import FilesConnection
 import plotly.graph_objects as go
+
 import os
 
 # -------------------------------------------------
-# DATA LOADING (robust encoding handling)
+# DATA LOADING
 # -------------------------------------------------
 
+# Create a GCS connection (must be defined in .streamlit/secrets.toml)
 conn = st.connection('gcs', type=FilesConnection)
 
-def read_csv_from_gcs(path, encoding_guess="cp932"):
-    # Read file from GCS with explicit encoding to avoid UTF-8 decode errors
-    with conn.fs.open(path, "rb") as f:
-        return pd.read_csv(f, encoding=encoding_guess)
-
-# read both CSVs
-df = read_csv_from_gcs("gs://tokyostockexchange/stock_prices.csv", encoding_guess="cp932")
-stock_list = read_csv_from_gcs("gs://tokyostockexchange/stock_list.csv", encoding_guess="cp932")
+# Read data from GCS
+df = conn.read("gs://tokyostockexchange/stock_prices.csv", input_format="csv")
+stock_list = conn.read("gs://tokyostockexchange/stock_list.csv", input_format="csv")
 
 # Convert Date to datetime
 df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
@@ -46,22 +43,23 @@ user_inputs = st.text_area(
 
 securities_codes = [c.strip() for c in user_inputs.split(',') if c.strip()]
 
+
 # -------------------------------------------------
-# HELPER
+# HELPER FUNCTIONS
 # -------------------------------------------------
 
 def get_data_for_code(df, code_as_str):
     """
-    Returns a copy of subset of df for this SecuritiesCode,
+    Returns a copy of the subset of df for this SecuritiesCode,
     with Date moved to index.
     """
     data = df[df['SecuritiesCode'] == int(code_as_str)].copy()
-    # move Date to index
     data.index = data.pop('Date')
     return data
 
+
 # -------------------------------------------------
-# OPEN PRICE
+# OPEN PRICE PLOT
 # -------------------------------------------------
 
 st.subheader('Open Price')
@@ -80,11 +78,12 @@ ax_open.legend()
 st.pyplot(fig_open)
 plt.close(fig_open)
 
-# show underlying rows
+# Optional: show underlying rows for the selected codes
 st.write(df[df['SecuritiesCode'].isin([int(code) for code in securities_codes])])
 
+
 # -------------------------------------------------
-# VOLUME
+# VOLUME PLOT
 # -------------------------------------------------
 
 st.subheader('Volume')
@@ -103,8 +102,9 @@ ax_vol.legend()
 st.pyplot(fig_vol)
 plt.close(fig_vol)
 
+
 # -------------------------------------------------
-# TOTAL TRADED
+# TOTAL TRADED (Volume * Open)
 # -------------------------------------------------
 
 st.subheader('Total Traded')
@@ -124,6 +124,7 @@ ax_tt.legend()
 st.pyplot(fig_tt)
 plt.close(fig_tt)
 
+
 # -------------------------------------------------
 # HIGHEST TRADED DAY
 # -------------------------------------------------
@@ -135,14 +136,16 @@ highest_traded_days = []
 for code in securities_codes:
     data = get_data_for_code(df, code)
     data['Total_Traded'] = data['Volume'] * data['Open']
+    # idxmax on a Series gives index label where it's max
     max_day = data['Total_Traded'].idxmax()
     highest_traded_days.append((code, max_day))
 
 for code, max_day in highest_traded_days:
     st.write(f'Highest traded value day of {code}: {max_day}')
 
+
 # -------------------------------------------------
-# MOVING AVERAGE
+# MOVING AVERAGE (MA50 / MA200 / Close)
 # -------------------------------------------------
 
 st.subheader('Moving Average Price')
@@ -165,12 +168,14 @@ for code in securities_codes:
     st.pyplot(fig_ma)
     plt.close(fig_ma)
 
+
 # -------------------------------------------------
-# CORRELATION MATRIX
+# CORRELATION MATRIX (Close price vs Close price)
 # -------------------------------------------------
 
 st.subheader('Correlation')
 
+# Build wide dataframe: each column = Close of one code
 correlation_matrix = pd.DataFrame()
 
 for code in securities_codes:
@@ -182,8 +187,9 @@ corr_matrix = correlation_matrix.corr()
 st.write("Correlation Matrix:")
 st.write(corr_matrix)
 
+
 # -------------------------------------------------
-# CORRELATION SCATTER
+# CORRELATION SCATTER PLOTS
 # -------------------------------------------------
 
 st.subheader('Correlation Scatter Plot')
@@ -211,6 +217,7 @@ for i in range(len(securities_codes)):
 
         st.pyplot(fig_scatter)
         plt.close(fig_scatter)
+
 
 # -------------------------------------------------
 # CANDLESTICK (NOV 2021)
@@ -254,10 +261,12 @@ def Candlestick(df_in, Title):
 
     return fig_candle
 
+
 for code in securities_codes:
     sel = get_data_for_code(df, code)
     sel_nov = sel.loc['2021-11-01':'2021-12-03']
     st.plotly_chart(Candlestick(sel_nov, f'Candlestick Chart for Securities Code {code}'))
+
 
 # -------------------------------------------------
 # DAILY RETURN HISTOGRAMS
@@ -268,9 +277,9 @@ st.subheader('Daily return')
 data_coll = pd.DataFrame()
 
 for code in securities_codes:
-    tmp = df[df['SecuritiesCode'] == int(code)].copy()
-    tmp['Return'] = tmp['Close'] / tmp['Close'].shift(1) - 1
-    data_coll = pd.concat([data_coll, tmp], axis=0)
+    data = df[df['SecuritiesCode'] == int(code)].copy()
+    data['Return'] = data['Close'] / data['Close'].shift(1) - 1
+    data_coll = pd.concat([data_coll, data], axis=0)
 
 for code in data_coll['SecuritiesCode'].unique():
     sub = data_coll[data_coll['SecuritiesCode'] == int(code)].copy()
@@ -284,6 +293,7 @@ for code in data_coll['SecuritiesCode'].unique():
 
     st.pyplot(fig_hist)
     plt.close(fig_hist)
+
 
 # -------------------------------------------------
 # CUMULATIVE RETURN
@@ -311,8 +321,9 @@ ax_cum.legend()
 st.pyplot(fig_cum)
 plt.close(fig_cum)
 
+
 # -------------------------------------------------
-# PORTFOLIO
+# PORTFOLIO DEFINITION (WEIGHTS INPUT)
 # -------------------------------------------------
 
 st.header("Portfolio")
@@ -330,7 +341,11 @@ for code in securities_codes:
     )
     securities_weights[code] = weight
 
+
+# -------------------------------------------------
 # PORTFOLIO RETURN TABLE
+# -------------------------------------------------
+
 st.subheader('Portfolio Return')
 
 Portfolio = pd.DataFrame()
@@ -347,7 +362,11 @@ Portfolio['Portfolio_ret'] = Portfolio.sum(axis=1)
 
 st.write(Portfolio)
 
+
+# -------------------------------------------------
 # SHARPE RATIO
+# -------------------------------------------------
+
 st.subheader('Sharpe Ratio')
 
 Portfolio_SR = pd.DataFrame()
@@ -362,7 +381,10 @@ for code, weight in securities_weights.items():
 
 Portfolio_SR['Portfolio_ret'] = Portfolio_SR.sum(axis=1)
 
+# Daily Return of the portfolio
 Portfolio_SR['Daily Return'] = Portfolio_SR['Portfolio_ret'].pct_change(1).fillna(0)
+
+# guard against div by zero
 Portfolio_SR['Daily Return'] = np.where(
     Portfolio_SR['Portfolio_ret'].shift(1) == 0,
     0,
@@ -380,9 +402,14 @@ else:
 st.write(f'The Sharpe Ratio for the portfolio is: {Sharpe_ratio:.2f}')
 st.write(Portfolio_SR)
 
+
+# -------------------------------------------------
 # PORTFOLIO OPTIMIZATION / EFFICIENT FRONTIER
+# -------------------------------------------------
+
 st.subheader('Portfolio Optimization')
 
+# Build joint price table for log returns
 Stocks_com = pd.DataFrame()
 for code in securities_codes:
     data = get_data_for_code(df, code)
@@ -390,26 +417,33 @@ for code in securities_codes:
 
 log_ret = np.log(Stocks_com / Stocks_com.shift(1))
 
-num_ports = 15000
+num_ports = 15000  # number of random portfolios to simulate
 all_weights = np.zeros((num_ports, len(Stocks_com.columns)))
 ret_arr = np.zeros(num_ports)
 vol_arr = np.zeros(num_ports)
 sharpe_arr = np.zeros(num_ports)
 
 for ind in range(num_ports):
+
+    # random weights
     weights = np.random.random(len(Stocks_com.columns))
     weights = weights / np.sum(weights)
 
     all_weights[ind, :] = weights
 
+    # expected return (annualized ~252 trading days)
     ret_arr[ind] = np.sum((log_ret.mean() * weights) * 252)
+
+    # expected volatility
     vol_arr[ind] = np.sqrt(np.dot(weights.T, np.dot(log_ret.cov() * 252, weights)))
 
+    # Sharpe Ratio
     if vol_arr[ind] == 0:
         sharpe_arr[ind] = np.nan
     else:
         sharpe_arr[ind] = ret_arr[ind] / vol_arr[ind]
 
+# Find optimal portfolio (max Sharpe)
 Optimal_index_point = np.nanargmax(sharpe_arr)
 Max_Portfolio_Sharpe_Ratio = sharpe_arr[Optimal_index_point]
 Optimal_weight_distribution = all_weights[Optimal_index_point, :]
@@ -421,6 +455,8 @@ st.write(f'Optimal weight distribution for securities code {securities_codes} is
 st.write(f'Optimal Portfolio Return is {max_sr_ret}')
 st.write(f'Optimal Portfolio Volatility is {max_sr_vol}')
 
+
+# Efficient Frontier Plot
 st.subheader('Efficient Frontier - Optimal Curve')
 
 fig_eff, ax_eff = plt.subplots(figsize=(12, 8))
@@ -431,6 +467,7 @@ ax_eff.set_xlabel('Volatility')
 ax_eff.set_ylabel('Return')
 ax_eff.set_title('Efficient Frontier')
 
+# Mark the optimal point
 ax_eff.scatter(max_sr_vol, max_sr_ret, c='red', s=50, edgecolors='black')
 
 st.pyplot(fig_eff)
