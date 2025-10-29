@@ -1,8 +1,8 @@
 import streamlit as st
-import warnings
+'''import warnings
 import logging
 warnings.filterwarnings("ignore")
-logging.getLogger("streamlit").setLevel(logging.ERROR)
+logging.getLogger("streamlit").setLevel(logging.ERROR)'''
 
 import numpy as np
 import pandas as pd
@@ -21,11 +21,11 @@ import os
 conn = st.connection('gcs', type=FilesConnection)
 
 # Read data from GCS
-df = conn.read("gs://tokyostockexchange/stock_prices.csv", input_format="csv", encoding="utf-8")
-stock_list = conn.read("gs://tokyostockexchange/stock_list.csv", input_format="csv", encoding="utf-8")
+df = conn.read("gs://tokyostockexchange/stock_prices.csv", input_format="csv")
+stock_list = conn.read("gs://tokyostockexchange/stock_list.csv", input_format="csv")
 
 # Convert Date to datetime
-df['Date'] = pd.to_datetime(df['Date'], encoding="utf-8")
+df['Date'] = pd.to_datetime(df['Date'])
 
 st.title('Tokyo Stock Exchange JPX (2017-01-04 to 2021-12-03)')
 
