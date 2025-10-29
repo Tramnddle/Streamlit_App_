@@ -12,13 +12,51 @@ from st_files_connection import FilesConnection
 import plotly.graph_objects as go
 
 # -------------------------------------------------
-# DATA LOADING (expects both CSVs are valid UTF-8)
+# HELPER: robust CSV loader with encoding fallback
+# -------------------------------------------------
+
+def read_csv_with_fallback(conn, path, encodings):
+    """
+    Try multiple encodings until one works.
+    This prevents UnicodeDecodeError like:
+    'utf-8' codec can't decode byte 0xD7 ...
+    """
+    last_err = None
+    for enc in encodings:
+        try:
+            df = conn.read(path, input_format="csv", encoding=enc)
+            st.caption(f"Loaded {path} using encoding: {enc}")
+            return df
+        except Exception as e:
+            last_err = e
+    # If none worked, raise the last error we saw
+    raise last_err
+
+# -------------------------------------------------
+# DATA LOADING (GCS via st.connection, no Snowflake)
 # -------------------------------------------------
 
 conn = st.connection('gcs', type=FilesConnection)
 
-df = conn.read("gs://tokyostockexchange/stock_prices.csv", input_format="csv")
-stock_list = conn.read("gs://tokyostockexchange/stock_list.csv", input_format="csv")
+try:
+    df = read_csv_with_fallback(
+        conn,
+        "gs://tokyostockexchange/stock_prices.csv",
+        encodings=["utf-8", "cp932", "shift_jis", "cp1252", "latin1"]
+    )
+except Exception as e:
+    st.error(f"Failed to load stock_prices.csv with any known encoding: {e}")
+    st.stop()
+
+try:
+    stock_list = read_csv_with_fallback(
+        conn,
+        "gs://tokyostockexchange/stock_list.csv",
+        encodings=["utf-8", "cp932", "shift_jis", "cp1252", "latin1"]
+    )
+except Exception as e:
+    st.error(f"Failed to load stock_list.csv with any known encoding: {e}")
+    st.stop()
 
 # make sure Date column is datetime
 if 'Date' in df.columns:
@@ -44,6 +82,7 @@ securities_codes = [c.strip() for c in user_inputs.split(',') if c.strip()]
 
 # helper to slice df for one code and set Date as index
 def get_data_for_code(df_full, code_str):
+    # We cast to int() because SecuritiesCode looks numeric in your data
     sub = df_full[df_full['SecuritiesCode'] == int(code_str)].copy()
     if 'Date' not in sub.columns:
         st.error("Column 'Date' missing from data.")
@@ -169,7 +208,7 @@ for code in securities_codes:
     data = get_data_for_code(df, code)
     if 'Close' not in data.columns:
         continue
-    # align all series by position, not timestamp (reset_index)
+    # align all series by position, not timestamp
     correlation_matrix[f'Securities Code {code}'] = data['Close'].reset_index(drop=True)
 
 if not correlation_matrix.empty:
@@ -233,7 +272,7 @@ def Candlestick(df_in, Title):
     if not needed_cols.issubset(df_local.columns):
         return None
 
-    # (Optional visual tweak: color by bullish/bearish)
+    # Optional: bullish/bearish coloring
     df_local['Color'] = [
         'green' if close > open_ else 'red'
         for close, open_ in zip(df_local['Close'], df_local['Open'])
@@ -369,15 +408,15 @@ st.subheader('Portfolio Return')
 Portfolio = pd.DataFrame()
 
 for code, weight in securities_weights.items():
-    data = get_data_for_code(df, code)
-    if 'Close' not in data.columns:
+    data_code = get_data_for_code(df, code)
+    if 'Close' not in data_code.columns:
         continue
 
-    data['Return'] = data['Close'] / data['Close'].shift(1) - 1
-    data['Cumulative_Return'] = (1 + data['Return']).cumprod()
-    data[f'weighted_ret_{code}'] = data['Cumulative_Return'] * weight
+    data_code['Return'] = data_code['Close'] / data_code['Close'].shift(1) - 1
+    data_code['Cumulative_Return'] = (1 + data_code['Return']).cumprod()
+    data_code[f'weighted_ret_{code}'] = data_code['Cumulative_Return'] * weight
 
-    Portfolio[f'weighted_ret_{code}'] = data[f'weighted_ret_{code}']
+    Portfolio[f'weighted_ret_{code}'] = data_code[f'weighted_ret_{code}']
 
 if not Portfolio.empty:
     Portfolio['Portfolio_ret'] = Portfolio.sum(axis=1)
@@ -394,15 +433,15 @@ st.subheader('Sharpe Ratio')
 Portfolio_SR = pd.DataFrame()
 
 for code, weight in securities_weights.items():
-    data = get_data_for_code(df, code)
-    if 'Close' not in data.columns:
+    data_code = get_data_for_code(df, code)
+    if 'Close' not in data_code.columns:
         continue
 
-    data['Return'] = data['Close'] / data['Close'].shift(1) - 1
-    data['Cumulative_Return'] = (1 + data['Return']).cumprod()
-    data[f'weighted_ret_{code}'] = data['Cumulative_Return'] * weight
+    data_code['Return'] = data_code['Close'] / data_code['Close'].shift(1) - 1
+    data_code['Cumulative_Return'] = (1 + data_code['Return']).cumprod()
+    data_code[f'weighted_ret_{code}'] = data_code['Cumulative_Return'] * weight
 
-    Portfolio_SR[f'weighted_ret_{code}'] = data[f'weighted_ret_{code}']
+    Portfolio_SR[f'weighted_ret_{code}'] = data_code[f'weighted_ret_{code}']
 
 if not Portfolio_SR.empty:
     Portfolio_SR['Portfolio_ret'] = Portfolio_SR.sum(axis=1)
@@ -435,11 +474,11 @@ st.subheader('Portfolio Optimization')
 
 Stocks_com = pd.DataFrame()
 for code in securities_codes:
-    data = get_data_for_code(df, code)
-    if 'Close' not in data.columns:
+    data_code = get_data_for_code(df, code)
+    if 'Close' not in data_code.columns:
         continue
     # reset_index(drop=True) so column vectors line up
-    Stocks_com[f'{code}_close'] = data['Close'].reset_index(drop=True)
+    Stocks_com[f'{code}_close'] = data_code['Close'].reset_index(drop=True)
 
 if Stocks_com.shape[1] >= 2:
     log_ret = np.log(Stocks_com / Stocks_com.shift(1))
@@ -480,7 +519,6 @@ if Stocks_com.shape[1] >= 2:
     st.write(f'Optimal Portfolio Return is {max_sr_ret}')
     st.write(f'Optimal Portfolio Volatility is {max_sr_vol}')
 
-    # efficient frontier plot (no deprecation warning because we pass fig)
     fig_eff, ax_eff = plt.subplots(figsize=(12, 8))
     scatter = ax_eff.scatter(vol_arr, ret_arr, c=sharpe_arr, cmap='plasma')
     fig_eff.colorbar(scatter, label='Sharpe Ratio')
