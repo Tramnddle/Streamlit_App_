@@ -48,6 +48,9 @@ user_inputs = st.text_area('Enter Stock Codes with comma as delimeter', '6752, 6
 
 securities_codes = user_inputs.split(',')
 
+fig, ax = plt.subplots()
+ax.plot(...)  # draw on ax instead of the global pyplot state
+
 plt.figure(figsize=(16, 8))
 
 st.subheader('Open Price')
@@ -58,7 +61,8 @@ for code in securities_codes:
 
 plt.title('Open Price')
 plt.legend()
-st.pyplot()
+st.pyplot(fig)
+#st.pyplot()
 
 # Optional: Display the dataframe
 st.write(df[df['SecuritiesCode'].isin([int(code) for code in securities_codes])])
