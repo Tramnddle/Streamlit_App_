@@ -1,4 +1,4 @@
-import streamlit as st
+ï»¿import streamlit as st
 import warnings
 import logging
 warnings.filterwarnings("ignore")
@@ -163,7 +163,7 @@ for code in securities_codes:
         max_day = data['Total_Traded'].idxmax()
         highest_traded_days.append((code, max_day))
 
-ax_tt.set_title('Total Traded (Volume × Open)')
+ax_tt.set_title('Total Traded (Volume ï¿½ Open)')
 ax_tt.set_xlabel('Date')
 ax_tt.set_ylabel('Total Traded Value')
 ax_tt.legend()
