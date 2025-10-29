@@ -22,12 +22,10 @@ conn = st.connection('gcs', type=FilesConnection)
 # Read a file from the cloud storage
 df = conn.read("gs://tokyostockexchange/stock_prices.csv", input_format="csv")
 
-# Open the df file
-st.dataframe(df)
 
 # Read the CSV file with Dask
 stock_list = conn.read("gs://tokyostockexchange/stock_list.csv", input_format="csv")
-st.dataframe(stock_list)
+
 
 # Create a dropdown menu
 Securities_List = st.selectbox('Securities reference list: ', list(stock_list[['SecuritiesCode', 'Name']].itertuples(index=False, name=None)))
@@ -39,8 +37,8 @@ df['Date'] = df['Date'].astype('M8[ns]')  # This is the datetime dtype in Dask
 # Compute if necessary
 #df = df.compute()
 
-st.title('Tokyo Stock Exchange JPX 2017-01-04 to 2021-12-03')
-user_inputs = st.text_area('Enter Stock Codes (comma-separated)', '6752, 6753, 6503')  # Example input
+st.title('Tokyo Stock Exchange JPX (2017-01-04 to 2021-12-03)')
+user_inputs = st.text_area('Enter Stock Codes with comma as delimeter', '6752, 6753, 6503')  # Example input
 
 
 securities_codes = user_inputs.split(',')
