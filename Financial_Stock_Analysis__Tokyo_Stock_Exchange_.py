@@ -3,10 +3,17 @@ import subprocess
 # Install required packages from requirements.txt
 subprocess.call("pip install -r requirements.txt", shell=True)
 
+import warnings
+warnings.filterwarnings("ignore")
+
+import streamlit as st
+st.set_option('deprecation.showPyplotGlobalUse', False)
+st.set_option('deprecation.showfileUploaderEncoding', False)
+
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import streamlit as st
 import gcsfs
 from st_files_connection import FilesConnection
 
