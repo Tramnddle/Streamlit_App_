@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import gcsfs
+import io
 from st_files_connection import FilesConnection
 import plotly.graph_objects as go
 
