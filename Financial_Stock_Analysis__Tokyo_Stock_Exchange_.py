@@ -1,9 +1,4 @@
 import streamlit as st
-'''import warnings
-import logging
-warnings.filterwarnings("ignore")
-logging.getLogger("streamlit").setLevel(logging.ERROR)'''
-
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
