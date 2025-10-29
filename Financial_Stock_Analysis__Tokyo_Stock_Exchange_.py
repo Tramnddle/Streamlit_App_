@@ -7,7 +7,6 @@ import warnings
 warnings.filterwarnings("ignore")
 
 import streamlit as st
-st.set_option('deprecation.showPyplotGlobalUse', False)
 st.set_option('deprecation.showfileUploaderEncoding', False)
 
 
