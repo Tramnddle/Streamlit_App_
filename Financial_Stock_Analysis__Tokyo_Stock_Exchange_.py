@@ -15,32 +15,35 @@ import plotly.graph_objects as go
 # HELPER: robust CSV loader with encoding fallback
 # -------------------------------------------------
 
-def read_csv_with_fallback(conn, path, encodings):
+def load_csv_from_gcs(path, encodings):
     """
-    Try multiple encodings until one works.
-    This prevents UnicodeDecodeError like:
-    'utf-8' codec can't decode byte 0xD7 ...
+    Read a CSV file from GCS as bytes, then try to decode with multiple encodings.
+    Returns a pandas.DataFrame.
     """
+    fs = gcsfs.GCSFileSystem()  # assumes your env is already authenticated to GCP
     last_err = None
+
+    # read raw bytes once
+    with fs.open(path, "rb") as f:
+        raw_bytes = f.read()
+
     for enc in encodings:
         try:
-            df = conn.read(path, input_format="csv", encoding=enc)
+            text = raw_bytes.decode(enc)
             st.caption(f"Loaded {path} using encoding: {enc}")
-            return df
+            return pd.read_csv(io.StringIO(text))
         except Exception as e:
             last_err = e
-    # If none worked, raise the last error we saw
+
+    # if we got here: none of the encodings worked
     raise last_err
+
 
 # -------------------------------------------------
 # DATA LOADING (GCS via st.connection, no Snowflake)
 # -------------------------------------------------
-
-conn = st.connection('gcs', type=FilesConnection)
-
 try:
-    df = read_csv_with_fallback(
-        conn,
+    df = load_csv_from_gcs(
         "gs://tokyostockexchange/stock_prices.csv",
         encodings=["utf-8", "cp932", "shift_jis", "cp1252", "latin1"]
     )
@@ -49,14 +52,17 @@ except Exception as e:
     st.stop()
 
 try:
-    stock_list = read_csv_with_fallback(
-        conn,
+    stock_list = load_csv_from_gcs(
         "gs://tokyostockexchange/stock_list.csv",
         encodings=["utf-8", "cp932", "shift_jis", "cp1252", "latin1"]
     )
 except Exception as e:
     st.error(f"Failed to load stock_list.csv with any known encoding: {e}")
     st.stop()
+
+# make sure Date column is datetime if present
+if 'Date' in df.columns:
+    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
 
 # make sure Date column is datetime
 if 'Date' in df.columns:
