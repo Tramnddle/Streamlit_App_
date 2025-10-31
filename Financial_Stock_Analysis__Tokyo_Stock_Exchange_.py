@@ -1,11 +1,11 @@
 ﻿import streamlit as st
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 import gcsfs
 import io
-from st_files_connection import FilesConnection
 import plotly.graph_objects as go
+from st_files_connection import FilesConnection
+from google.oauth2 import service_account
 
 # -------------------------------------------------
 # HELPER: robust CSV loader with encoding fallback
@@ -13,13 +13,16 @@ import plotly.graph_objects as go
 
 def load_csv_from_gcs(path, encodings):
     """
-    Read a CSV file from GCS as bytes, then try to decode with multiple encodings.
-    Returns a pandas.DataFrame.
+    Read a CSV file from GCS using explicit service account credentials.
+    Tries multiple encodings for CSV.
     """
-    fs = gcsfs.GCSFileSystem()  # assumes your env is already authenticated to GCP
-    last_err = None
+    # Load credentials from Streamlit secrets (stored as [connections.gcs])
+    creds = service_account.Credentials.from_service_account_info(
+        st.secrets["connections.gcs"]
+    )
+    fs = gcsfs.GCSFileSystem(token=creds)  # <--- critical fix
 
-    # read raw bytes once
+    last_err = None
     with fs.open(path, "rb") as f:
         raw_bytes = f.read()
 
@@ -31,13 +34,13 @@ def load_csv_from_gcs(path, encodings):
         except Exception as e:
             last_err = e
 
-    # if we got here: none of the encodings worked
     raise last_err
 
 
 # -------------------------------------------------
-# DATA LOADING (GCS via st.connection, no Snowflake)
+# DATA LOADING (GCS via service account creds)
 # -------------------------------------------------
+
 try:
     df = load_csv_from_gcs(
         "gs://tokyostockexchange/stock_prices.csv",
@@ -56,17 +59,14 @@ except Exception as e:
     st.error(f"Failed to load stock_list.csv with any known encoding: {e}")
     st.stop()
 
-# make sure Date column is datetime if present
-if 'Date' in df.columns:
-    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-
-# make sure Date column is datetime
-if 'Date' in df.columns:
-    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+# Convert Date columns if present
+for df_ in [df, stock_list]:
+    if 'Date' in df_.columns:
+        df_['Date'] = pd.to_datetime(df_['Date'], errors='coerce')
 
 st.title('Tokyo Stock Exchange JPX (2017-01-04 to 2021-12-03)')
 
-# dropdown for reference list
+# Dropdown for securities reference
 if 'SecuritiesCode' in stock_list.columns and 'Name' in stock_list.columns:
     Securities_List = st.selectbox(
         'Securities reference list:',
@@ -74,6 +74,7 @@ if 'SecuritiesCode' in stock_list.columns and 'Name' in stock_list.columns:
     )
 else:
     st.warning("stock_list.csv does not contain expected columns SecuritiesCode / Name")
+
 
 # user input for selected securities
 user_inputs = st.text_area(
