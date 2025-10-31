@@ -14,10 +14,14 @@ from google.oauth2 import service_account
 
 @st.cache_resource
 def get_fs():
-    # secrets path is correct: ["connections"]["gcs"]
     cfg = dict(st.secrets["connections"]["gcs"])
-    creds = service_account.Credentials.from_service_account_info(cfg)
-    return gcsfs.GCSFileSystem(token=creds)
+    # ✅ Add explicit Cloud Storage read/write scope
+    creds = service_account.Credentials.from_service_account_info(
+        cfg,
+        scopes=["https://www.googleapis.com/auth/devstorage.read_write"]
+    )
+    fs = gcsfs.GCSFileSystem(token=creds)
+    return fs
 
 def load_csv_from_gcs(path, encodings):
     fs = get_fs()
