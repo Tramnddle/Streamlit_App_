@@ -7,6 +7,13 @@ import plotly.graph_objects as go
 from st_files_connection import FilesConnection
 from google.oauth2 import service_account
 
+#DEBUG 
+st.write("secrets keys:", list(st.secrets.keys()))
+st.write("connections present:", "connections" in st.secrets)
+st.write("gcs present:", "connections" in st.secrets and "gcs" in st.secrets["connections"])
+
+
+
 # -------------------------------------------------
 # HELPER: robust CSV loader with encoding fallback
 # -------------------------------------------------
