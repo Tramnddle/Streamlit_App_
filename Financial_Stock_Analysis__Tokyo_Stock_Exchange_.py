@@ -7,40 +7,28 @@ import plotly.graph_objects as go
 from st_files_connection import FilesConnection
 from google.oauth2 import service_account
 
-#DEBUG 
-st.write("secrets keys:", list(st.secrets.keys()))
-st.write("connections present:", "connections" in st.secrets)
-st.write("gcs present:", "connections" in st.secrets and "gcs" in st.secrets["connections"])
-
-
 
 # -------------------------------------------------
 # HELPER: robust CSV loader with encoding fallback
 # -------------------------------------------------
 
-def load_csv_from_gcs(path, encodings):
-    """
-    Read a CSV file from GCS using explicit service account credentials.
-    Tries multiple encodings for CSV.
-    """
-    # Load credentials from Streamlit secrets (stored as [connections.gcs])
-    creds = service_account.Credentials.from_service_account_info(
-        st.secrets["connections.gcs"]
-    )
-    fs = gcsfs.GCSFileSystem(token=creds)  # <--- critical fix
+@st.cache_resource
+def get_fs():
+    # secrets path is correct: ["connections"]["gcs"]
+    cfg = dict(st.secrets["connections"]["gcs"])
+    creds = service_account.Credentials.from_service_account_info(cfg)
+    return gcsfs.GCSFileSystem(token=creds)
 
+def load_csv_from_gcs(path, encodings):
+    fs = get_fs()
     last_err = None
     with fs.open(path, "rb") as f:
         raw_bytes = f.read()
-
     for enc in encodings:
         try:
-            text = raw_bytes.decode(enc)
-            st.caption(f"Loaded {path} using encoding: {enc}")
-            return pd.read_csv(io.StringIO(text))
+            return pd.read_csv(io.StringIO(raw_bytes.decode(enc)))
         except Exception as e:
             last_err = e
-
     raise last_err
 
 
