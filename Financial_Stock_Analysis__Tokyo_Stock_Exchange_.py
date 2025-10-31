@@ -1,30 +1,24 @@
 ﻿import streamlit as st
 import numpy as np
 import pandas as pd
-import gcsfs
-import io
+import gcsfs, io
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
-from st_files_connection import FilesConnection
 from google.oauth2 import service_account
 
-
-# -------------------------------------------------
-# HELPER: robust CSV loader with encoding fallback
-# -------------------------------------------------
-
+# ========================
+# Auth & data helpers
+# ========================
 @st.cache_resource
 def get_fs():
     cfg = dict(st.secrets["connections"]["gcs"])
-    # ✅ Add explicit Cloud Storage read/write scope
     creds = service_account.Credentials.from_service_account_info(
         cfg,
         scopes=["https://www.googleapis.com/auth/devstorage.read_write"]
     )
-    fs = gcsfs.GCSFileSystem(token=creds)
-    return fs
+    return gcsfs.GCSFileSystem(token=creds)
 
-def load_csv_from_gcs(path, encodings):
+def load_csv_from_gcs(path, encodings=("utf-8", "cp932", "shift_jis", "cp1252", "latin1")):
     fs = get_fs()
     last_err = None
     with fs.open(path, "rb") as f:
@@ -36,56 +30,7 @@ def load_csv_from_gcs(path, encodings):
             last_err = e
     raise last_err
 
-
-# -------------------------------------------------
-# DATA LOADING (GCS via service account creds)
-# -------------------------------------------------
-
-try:
-    df = load_csv_from_gcs(
-        "gs://tokyostockexchange/stock_prices.csv",
-        encodings=["utf-8", "cp932", "shift_jis", "cp1252", "latin1"]
-    )
-except Exception as e:
-    st.error(f"Failed to load stock_prices.csv with any known encoding: {e}")
-    st.stop()
-
-try:
-    stock_list = load_csv_from_gcs(
-        "gs://tokyostockexchange/stock_list.csv",
-        encodings=["utf-8", "cp932", "shift_jis", "cp1252", "latin1"]
-    )
-except Exception as e:
-    st.error(f"Failed to load stock_list.csv with any known encoding: {e}")
-    st.stop()
-
-# Convert Date columns if present
-for df_ in [df, stock_list]:
-    if 'Date' in df_.columns:
-        df_['Date'] = pd.to_datetime(df_['Date'], errors='coerce')
-
-st.title('Tokyo Stock Exchange JPX (2017-01-04 to 2021-12-03)')
-
-# Dropdown for securities reference
-if 'SecuritiesCode' in stock_list.columns and 'Name' in stock_list.columns:
-    Securities_List = st.selectbox(
-        'Securities reference list:',
-        list(stock_list[['SecuritiesCode', 'Name']].itertuples(index=False, name=None))
-    )
-else:
-    st.warning("stock_list.csv does not contain expected columns SecuritiesCode / Name")
-
-
-# user input for selected securities
-user_inputs = st.text_area(
-    'Enter Stock Codes with comma as delimiter',
-    '6752, 6753, 6503'
-)
-securities_codes = [c.strip() for c in user_inputs.split(',') if c.strip()]
-
-# helper to slice df for one code and set Date as index
 def get_data_for_code(df_full, code_str):
-    # We cast to int() because SecuritiesCode looks numeric in your data
     sub = df_full[df_full['SecuritiesCode'] == int(code_str)].copy()
     if 'Date' not in sub.columns:
         st.error("Column 'Date' missing from data.")
@@ -93,448 +38,270 @@ def get_data_for_code(df_full, code_str):
     sub.index = pd.to_datetime(sub.pop('Date'), errors='coerce')
     return sub
 
-# -------------------------------------------------
-# OPEN PRICE
-# -------------------------------------------------
+# ========================
+# Load data once
+# ========================
+st.title('Tokyo Stock Exchange JPX (2017-01-04 to 2021-12-03)')
+
+try:
+    df = load_csv_from_gcs("gs://tokyostockexchange/stock_prices.csv")
+except Exception as e:
+    st.error(f"Failed to load stock_prices.csv with any known encoding: {e}")
+    st.stop()
+
+try:
+    stock_list = load_csv_from_gcs("gs://tokyostockexchange/stock_list.csv")
+except Exception as e:
+    st.error(f"Failed to load stock_list.csv with any known encoding: {e}")
+    st.stop()
+
+# Normalize dates (both, if present)
+for _df in (df, stock_list):
+    if 'Date' in _df.columns:
+        _df['Date'] = pd.to_datetime(_df['Date'], errors='coerce')
+
+# ============================================================
+# STEP 1 — TICKER SELECTION (gated by form_submit_button)
+# ============================================================
+st.header("Step 1 — Select securities")
+
+with st.form("select_codes_form", clear_on_submit=False):
+    # Optional reference dropdown (informational)
+    if {'SecuritiesCode', 'Name'}.issubset(stock_list.columns):
+        st.caption("Reference list (SecuritiesCode, Name)")
+        st.dataframe(stock_list[['SecuritiesCode', 'Name']].head(20))
+    user_inputs = st.text_area('Enter Stock Codes (comma-separated)', '6752, 6753, 6503')
+    submitted_codes = st.form_submit_button("Load series")
+
+if submitted_codes:
+    codes = [c.strip() for c in user_inputs.split(',') if c.strip()]
+    st.session_state['securities_codes'] = codes
+
+# Guard: stop until Step 1 is completed
+if 'securities_codes' not in st.session_state or not st.session_state['securities_codes']:
+    st.info("Enter the securities codes above and click **Load series** to continue.")
+    st.stop()
+
+securities_codes = st.session_state['securities_codes']
+
+# ========================
+# Plots & analytics (run only after Step 1)
+# ========================
 
 st.subheader('Open Price')
-
 fig_open, ax_open = plt.subplots(figsize=(16, 8))
 for code in securities_codes:
     data = get_data_for_code(df, code)
-    if 'Open' not in data.columns:
-        continue
-    ax_open.plot(data.index, data['Open'], label=f'Securities Code: {code}')
-
-ax_open.set_title('Open Price')
-ax_open.set_xlabel('Date')
-ax_open.set_ylabel('Price')
-ax_open.legend()
-
-st.pyplot(fig_open)
-plt.close(fig_open)
-
-# Show raw rows for inspection
-if 'SecuritiesCode' in df.columns:
-    st.write(df[df['SecuritiesCode'].isin([int(code) for code in securities_codes])])
-
-# -------------------------------------------------
-# VOLUME
-# -------------------------------------------------
+    if 'Open' in data.columns:
+        ax_open.plot(data.index, data['Open'], label=f'{code}')
+ax_open.set_title('Open Price'); ax_open.set_xlabel('Date'); ax_open.set_ylabel('Price'); ax_open.legend()
+st.pyplot(fig_open); plt.close(fig_open)
 
 st.subheader('Volume')
-
 fig_vol, ax_vol = plt.subplots(figsize=(16, 8))
 for code in securities_codes:
     data = get_data_for_code(df, code)
-    if 'Volume' not in data.columns:
-        continue
-    ax_vol.plot(data.index, data['Volume'], label=f'Securities Code: {code}')
-
-ax_vol.set_title('Volume')
-ax_vol.set_xlabel('Date')
-ax_vol.set_ylabel('Volume')
-ax_vol.legend()
-
-st.pyplot(fig_vol)
-plt.close(fig_vol)
-
-# -------------------------------------------------
-# TOTAL TRADED
-# -------------------------------------------------
+    if 'Volume' in data.columns:
+        ax_vol.plot(data.index, data['Volume'], label=f'{code}')
+ax_vol.set_title('Volume'); ax_vol.set_xlabel('Date'); ax_vol.set_ylabel('Volume'); ax_vol.legend()
+st.pyplot(fig_vol); plt.close(fig_vol)
 
 st.subheader('Total Traded')
-
 fig_tt, ax_tt = plt.subplots(figsize=(16, 8))
 highest_traded_days = []
-
 for code in securities_codes:
     data = get_data_for_code(df, code)
-    if not {'Volume', 'Open'}.issubset(data.columns):
-        continue
-
-    data['Total_Traded'] = data['Volume'] * data['Open']
-    ax_tt.plot(data.index, data['Total_Traded'], label=f'Securities Code: {code}')
-
-    if data['Total_Traded'].notna().any():
-        max_day = data['Total_Traded'].idxmax()
-        highest_traded_days.append((code, max_day))
-
-ax_tt.set_title('Total Traded (Volume � Open)')
-ax_tt.set_xlabel('Date')
-ax_tt.set_ylabel('Total Traded Value')
-ax_tt.legend()
-
-st.pyplot(fig_tt)
-plt.close(fig_tt)
-
-st.subheader('Highest traded day')
+    if {'Volume', 'Open'}.issubset(data.columns):
+        data['Total_Traded'] = data['Volume'] * data['Open']
+        ax_tt.plot(data.index, data['Total_Traded'], label=f'{code}')
+        if data['Total_Traded'].notna().any():
+            highest_traded_days.append((code, data['Total_Traded'].idxmax()))
+ax_tt.set_title('Total Traded (Volume × Open)'); ax_tt.set_xlabel('Date'); ax_tt.set_ylabel('Total Traded'); ax_tt.legend()
+st.pyplot(fig_tt); plt.close(fig_tt)
+st.caption("Highest traded day:")
 for code, max_day in highest_traded_days:
-    st.write(f'Highest traded value day of {code}: {max_day}')
-
-# -------------------------------------------------
-# MOVING AVERAGE PRICE
-# -------------------------------------------------
+    st.write(f"{code}: {max_day.date()}")
 
 st.subheader('Moving Average Price')
-
 for code in securities_codes:
     data = get_data_for_code(df, code)
-    if 'Close' not in data.columns:
-        continue
-
-    data['MA_50'] = data['Close'].rolling(50).mean()
-    data['MA_200'] = data['Close'].rolling(200).mean()
-
-    fig_ma, ax_ma = plt.subplots(figsize=(16, 8))
-    ax_ma.plot(data.index, data['Close'], label='Close', color='green')
-    ax_ma.plot(data.index, data['MA_50'], label='MA_50', color='blue')
-    ax_ma.plot(data.index, data['MA_200'], label='MA_200', color='orange')
-
-    ax_ma.set_title(f'Securities code {code}')
-    ax_ma.set_xlabel('Date')
-    ax_ma.set_ylabel('Price')
-    ax_ma.legend()
-
-    st.pyplot(fig_ma)
-    plt.close(fig_ma)
-
-# -------------------------------------------------
-# CORRELATION MATRIX
-# -------------------------------------------------
+    if 'Close' in data.columns:
+        data['MA_50'] = data['Close'].rolling(50).mean()
+        data['MA_200'] = data['Close'].rolling(200).mean()
+        fig_ma, ax_ma = plt.subplots(figsize=(16, 8))
+        ax_ma.plot(data.index, data['Close'], label='Close')
+        ax_ma.plot(data.index, data['MA_50'], label='MA_50')
+        ax_ma.plot(data.index, data['MA_200'], label='MA_200')
+        ax_ma.set_title(f'{code}'); ax_ma.set_xlabel('Date'); ax_ma.set_ylabel('Price'); ax_ma.legend()
+        st.pyplot(fig_ma); plt.close(fig_ma)
 
 st.subheader('Correlation')
-
-correlation_matrix = pd.DataFrame()
-
+corr_df = pd.DataFrame()
 for code in securities_codes:
-    data = get_data_for_code(df, code)
-    if 'Close' not in data.columns:
-        continue
-    # align all series by position, not timestamp
-    correlation_matrix[f'Securities Code {code}'] = data['Close'].reset_index(drop=True)
-
-if not correlation_matrix.empty:
-    corr_matrix = correlation_matrix.corr()
-    st.write("Correlation Matrix:")
-    st.write(corr_matrix)
+    d = get_data_for_code(df, code)
+    if 'Close' in d.columns:
+        corr_df[f'{code}'] = d['Close'].reset_index(drop=True)
+if not corr_df.empty:
+    st.write(corr_df.corr())
 else:
-    st.write("Not enough 'Close' price data to compute correlation.")
-
-# -------------------------------------------------
-# CORRELATION SCATTER PLOTS (PAIRWISE)
-# -------------------------------------------------
+    st.write("Not enough 'Close' data to compute correlation.")
 
 st.subheader('Correlation Scatter Plot')
-
 for i in range(len(securities_codes)):
     for j in range(i + 1, len(securities_codes)):
-        code_i = securities_codes[i]
-        code_j = securities_codes[j]
-
-        data_i = get_data_for_code(df, code_i)
-        data_j = get_data_for_code(df, code_j)
-
-        if 'Close' not in data_i.columns or 'Close' not in data_j.columns:
-            continue
-
-        merged = pd.concat(
-            [
-                data_i['Close'].reset_index(drop=True).rename(code_i),
-                data_j['Close'].reset_index(drop=True).rename(code_j)
-            ],
-            axis=1
-        ).dropna()
-
-        if merged.empty:
-            continue
-
-        fig_scatter, ax_scatter = plt.subplots(figsize=(8, 6))
-        ax_scatter.scatter(
-            merged[code_i],
-            merged[code_j],
-            alpha=0.5
-        )
-        ax_scatter.set_title(f'Correlation between {code_i} and {code_j}')
-        ax_scatter.set_xlabel(code_i)
-        ax_scatter.set_ylabel(code_j)
-        ax_scatter.grid(True)
-
-        st.pyplot(fig_scatter)
-        plt.close(fig_scatter)
-
-# -------------------------------------------------
-# CANDLESTICK (NOV 2021)
-# -------------------------------------------------
+        ci, cj = securities_codes[i], securities_codes[j]
+        di, dj = get_data_for_code(df, ci), get_data_for_code(df, cj)
+        if 'Close' in di.columns and 'Close' in dj.columns:
+            merged = pd.concat(
+                [di['Close'].reset_index(drop=True).rename(ci),
+                 dj['Close'].reset_index(drop=True).rename(cj)], axis=1
+            ).dropna()
+            if merged.empty: continue
+            fig_sc, ax_sc = plt.subplots(figsize=(8, 6))
+            ax_sc.scatter(merged[ci], merged[cj], alpha=0.5)
+            ax_sc.set_title(f'{ci} vs {cj}'); ax_sc.set_xlabel(ci); ax_sc.set_ylabel(cj); ax_sc.grid(True)
+            st.pyplot(fig_sc); plt.close(fig_sc)
 
 st.subheader('Candlestick chart in Nov 2021')
-
 def Candlestick(df_in, Title):
-    df_local = df_in.copy()
-    needed_cols = {'Open', 'High', 'Low', 'Close'}
-    if not needed_cols.issubset(df_local.columns):
-        return None
-
-    # Optional: bullish/bearish coloring
-    df_local['Color'] = [
-        'green' if close > open_ else 'red'
-        for close, open_ in zip(df_local['Close'], df_local['Open'])
-    ]
-
-    fig_candle = go.Figure(
-        data=[
-            go.Candlestick(
-                x=df_local.index,
-                open=df_local['Open'],
-                high=df_local['High'],
-                low=df_local['Low'],
-                close=df_local['Close'],
-                increasing_line_color='green',
-                decreasing_line_color='red',
-                increasing_fillcolor='green',
-                decreasing_fillcolor='red',
-                line=dict(width=1),
-                whiskerwidth=0.2,
-                opacity=0.7,
-                hoverinfo="x+y+z+text",
-                hovertext=df_local['Color']
-            )
-        ]
-    )
-
-    fig_candle.update_layout(
-        title=Title,
-        xaxis_title='Date',
-        yaxis_title='Price'
-    )
-
-    return fig_candle
+    need = {'Open','High','Low','Close'}
+    if not need.issubset(df_in.columns): return None
+    fig = go.Figure(data=[go.Candlestick(
+        x=df_in.index, open=df_in['Open'], high=df_in['High'],
+        low=df_in['Low'], close=df_in['Close'],
+        increasing_line_color='green', decreasing_line_color='red',
+        increasing_fillcolor='green', decreasing_fillcolor='red',
+        line=dict(width=1), whiskerwidth=0.2, opacity=0.7
+    )])
+    fig.update_layout(title=Title, xaxis_title='Date', yaxis_title='Price')
+    return fig
 
 for code in securities_codes:
     sel = get_data_for_code(df, code)
-    if not {'Open', 'High', 'Low', 'Close'}.issubset(sel.columns):
-        continue
-
-    # filter to Nov 2021 range
-    sel_nov = sel.loc['2021-11-01':'2021-12-03']
-    fig_candle = Candlestick(sel_nov, f'Candlestick Chart for Securities Code {code}')
-    if fig_candle is not None:
-        st.plotly_chart(fig_candle)
-
-# -------------------------------------------------
-# DAILY RETURN HISTOGRAMS
-# -------------------------------------------------
+    if {'Open','High','Low','Close'}.issubset(sel.columns):
+        sel_nov = sel.loc['2021-11-01':'2021-12-03']
+        fig_candle = Candlestick(sel_nov, f'{code}')
+        if fig_candle: st.plotly_chart(fig_candle)
 
 st.subheader('Daily return')
-
-# build a combined table of all daily returns
 data_coll = pd.DataFrame()
-
 for code in securities_codes:
     tmp = df[df['SecuritiesCode'] == int(code)].copy()
-    if 'Close' not in tmp.columns:
-        continue
-    tmp['Return'] = tmp['Close'] / tmp['Close'].shift(1) - 1
-    tmp['SecuritiesCode'] = tmp['SecuritiesCode'].astype(str)
-    data_coll = pd.concat([data_coll, tmp], axis=0)
-
+    if 'Close' in tmp.columns:
+        tmp['Return'] = tmp['Close'] / tmp['Close'].shift(1) - 1
+        tmp['SecuritiesCode'] = tmp['SecuritiesCode'].astype(str)
+        data_coll = pd.concat([data_coll, tmp], axis=0)
 for code in data_coll['SecuritiesCode'].unique():
-    sub = data_coll[data_coll['SecuritiesCode'] == code].copy()
-    if 'Return' not in sub.columns:
-        continue
-
-    fig_hist, ax_hist = plt.subplots(figsize=(8, 6))
-    ax_hist.hist(sub['Return'].dropna(), bins=50)
-    ax_hist.set_title(f'Daily Returns for Securities Code {code}')
-    ax_hist.set_xlabel('Return')
-    ax_hist.set_ylabel('Frequency')
-    ax_hist.grid(True)
-
-    st.pyplot(fig_hist)
-    plt.close(fig_hist)
-
-# -------------------------------------------------
-# CUMULATIVE RETURN
-# -------------------------------------------------
+    sub = data_coll[data_coll['SecuritiesCode'] == code]
+    if 'Return' in sub.columns:
+        fig_h, ax_h = plt.subplots(figsize=(8, 6))
+        ax_h.hist(sub['Return'].dropna(), bins=50)
+        ax_h.set_title(f'Returns {code}'); ax_h.set_xlabel('Return'); ax_h.set_ylabel('Freq'); ax_h.grid(True)
+        st.pyplot(fig_h); plt.close(fig_h)
 
 st.subheader('Cumulative return')
-
 fig_cum, ax_cum = plt.subplots(figsize=(16, 8))
-
 for code in securities_codes:
-    data_selected = get_data_for_code(df, code)
-    if 'Close' not in data_selected.columns:
-        continue
+    ds = get_data_for_code(df, code)
+    if 'Close' in ds.columns:
+        ds['Return'] = ds['Close'] / ds['Close'].shift(1) - 1
+        ds['Cumulative_Return'] = (1 + ds['Return']).cumprod()
+        ax_cum.plot(ds.index, ds['Cumulative_Return'], label=f'{code}')
+ax_cum.set_title('Cumulative Return'); ax_cum.set_xlabel('Date'); ax_cum.set_ylabel('Cumulative Return'); ax_cum.legend()
+st.pyplot(fig_cum); plt.close(fig_cum)
 
-    data_selected['Return'] = data_selected['Close'] / data_selected['Close'].shift(1) - 1
-    data_selected['Cumulative_Return'] = (1 + data_selected['Return']).cumprod()
+# ============================================================
+# STEP 2 — WEIGHTS (also gated by form)
+# ============================================================
+st.header("Step 2 — Portfolio weights")
+with st.form("weights_form", clear_on_submit=False):
+    st.caption("Weights should sum to 1.0")
+    weights = {}
+    for code in securities_codes:
+        weights[code] = st.number_input(
+            f'Weight for {code}', min_value=0.0, max_value=1.0, step=0.01, key=f"weight_{code}"
+        )
+    submitted_weights = st.form_submit_button("Calculate portfolio")
 
-    ax_cum.plot(
-        data_selected.index,
-        data_selected['Cumulative_Return'],
-        label=f'Securities Code: {code}'
-    )
+if submitted_weights:
+    st.session_state['weights'] = weights
 
-ax_cum.set_title('Cumulative Return')
-ax_cum.set_xlabel('Date')
-ax_cum.set_ylabel('Cumulative Return')
-ax_cum.legend()
+# Guard: stop here until weights are submitted
+if 'weights' not in st.session_state:
+    st.info("Enter weights and click **Calculate portfolio** to continue.")
+    st.stop()
 
-st.pyplot(fig_cum)
-plt.close(fig_cum)
+securities_weights = st.session_state['weights']
+total_w = sum(securities_weights.values())
+if not (0.999 <= total_w <= 1.001):
+    st.error(f"Weights must sum to 1.0 (current sum = {total_w:.3f}). Adjust and resubmit.")
+    st.stop()
 
-# -------------------------------------------------
-# PORTFOLIO INPUT (WEIGHTS)
-# -------------------------------------------------
-
-st.header("Portfolio")
-
-st.subheader('Enter Securities Weights (note: total weights should sum to 1.0)')
-
-securities_weights = {}
-for code in securities_codes:
-    weight = st.number_input(
-        f'Weight for Securities Code {code}',
-        min_value=0.0,
-        max_value=1.0,
-        step=0.01,
-        key=f"weight_{code}"
-    )
-    securities_weights[code] = weight
-
-# -------------------------------------------------
-# PORTFOLIO RETURN TABLE
-# -------------------------------------------------
-
+# ========================
+# Portfolio analytics (run only after Step 2)
+# ========================
 st.subheader('Portfolio Return')
-
 Portfolio = pd.DataFrame()
-
 for code, weight in securities_weights.items():
     data_code = get_data_for_code(df, code)
-    if 'Close' not in data_code.columns:
-        continue
-
+    if 'Close' not in data_code.columns: continue
     data_code['Return'] = data_code['Close'] / data_code['Close'].shift(1) - 1
     data_code['Cumulative_Return'] = (1 + data_code['Return']).cumprod()
-    data_code[f'weighted_ret_{code}'] = data_code['Cumulative_Return'] * weight
-
-    Portfolio[f'weighted_ret_{code}'] = data_code[f'weighted_ret_{code}']
+    Portfolio[f'weighted_ret_{code}'] = data_code['Cumulative_Return'] * weight
 
 if not Portfolio.empty:
     Portfolio['Portfolio_ret'] = Portfolio.sum(axis=1)
-    st.write(Portfolio)
+    st.dataframe(Portfolio)
 else:
-    st.write("No valid return data yet (maybe all weights are 0 or missing Close values).")
-
-# -------------------------------------------------
-# SHARPE RATIO
-# -------------------------------------------------
+    st.write("No valid return data.")
 
 st.subheader('Sharpe Ratio')
-
-Portfolio_SR = pd.DataFrame()
-
-for code, weight in securities_weights.items():
-    data_code = get_data_for_code(df, code)
-    if 'Close' not in data_code.columns:
-        continue
-
-    data_code['Return'] = data_code['Close'] / data_code['Close'].shift(1) - 1
-    data_code['Cumulative_Return'] = (1 + data_code['Return']).cumprod()
-    data_code[f'weighted_ret_{code}'] = data_code['Cumulative_Return'] * weight
-
-    Portfolio_SR[f'weighted_ret_{code}'] = data_code[f'weighted_ret_{code}']
-
-if not Portfolio_SR.empty:
-    Portfolio_SR['Portfolio_ret'] = Portfolio_SR.sum(axis=1)
-
+Portfolio_SR = Portfolio.copy()
+if 'Portfolio_ret' in Portfolio_SR.columns:
     Portfolio_SR['Daily Return'] = Portfolio_SR['Portfolio_ret'].pct_change(1).fillna(0)
     Portfolio_SR['Daily Return'] = np.where(
-        Portfolio_SR['Portfolio_ret'].shift(1) == 0,
-        0,
-        Portfolio_SR['Daily Return']
+        Portfolio_SR['Portfolio_ret'].shift(1) == 0, 0, Portfolio_SR['Daily Return']
     )
-
-    portfolio_daily_ret_mean = Portfolio_SR['Daily Return'].mean()
-    portfolio_daily_ret_std = Portfolio_SR['Daily Return'].std()
-
-    if portfolio_daily_ret_std == 0:
-        Sharpe_ratio = np.nan
-    else:
-        Sharpe_ratio = portfolio_daily_ret_mean / portfolio_daily_ret_std
-
-    st.write(f'The Sharpe Ratio for the portfolio is: {Sharpe_ratio:.2f}')
-    st.write(Portfolio_SR)
+    std = Portfolio_SR['Daily Return'].std()
+    sharpe = np.nan if std == 0 else Portfolio_SR['Daily Return'].mean() / std
+    st.write(f'The Sharpe Ratio for the portfolio is: {sharpe:.2f}')
+    st.dataframe(Portfolio_SR)
 else:
     st.write("Not enough data to compute Sharpe Ratio.")
 
-# -------------------------------------------------
-# PORTFOLIO OPTIMIZATION / EFFICIENT FRONTIER
-# -------------------------------------------------
-
-st.subheader('Portfolio Optimization')
-
+st.subheader('Portfolio Optimization (Efficient Frontier)')
+# Build close matrix
 Stocks_com = pd.DataFrame()
 for code in securities_codes:
     data_code = get_data_for_code(df, code)
-    if 'Close' not in data_code.columns:
-        continue
-    # reset_index(drop=True) so column vectors line up
-    Stocks_com[f'{code}_close'] = data_code['Close'].reset_index(drop=True)
+    if 'Close' in data_code.columns:
+        Stocks_com[f'{code}_close'] = data_code['Close'].reset_index(drop=True)
 
 if Stocks_com.shape[1] >= 2:
     log_ret = np.log(Stocks_com / Stocks_com.shift(1))
-
     num_ports = 15000
-    all_weights = np.zeros((num_ports, len(Stocks_com.columns)))
-    ret_arr = np.zeros(num_ports)
-    vol_arr = np.zeros(num_ports)
-    sharpe_arr = np.zeros(num_ports)
+    all_weights = np.zeros((num_ports, Stocks_com.shape[1]))
+    ret_arr = np.zeros(num_ports); vol_arr = np.zeros(num_ports); sharpe_arr = np.zeros(num_ports)
 
-    for ind in range(num_ports):
-        # random weights
-        weights = np.random.random(len(Stocks_com.columns))
-        weights = weights / np.sum(weights)
+    for i in range(num_ports):
+        w = np.random.random(Stocks_com.shape[1]); w /= w.sum()
+        all_weights[i, :] = w
+        ret_arr[i] = np.sum((log_ret.mean() * w) * 252)
+        vol_arr[i] = np.sqrt(np.dot(w.T, np.dot(log_ret.cov() * 252, w)))
+        sharpe_arr[i] = np.nan if vol_arr[i] == 0 else ret_arr[i] / vol_arr[i]
 
-        all_weights[ind, :] = weights
-
-        # annualized expected return (252 trading days)
-        ret_arr[ind] = np.sum((log_ret.mean() * weights) * 252)
-
-        # annualized vol
-        vol_arr[ind] = np.sqrt(np.dot(weights.T, np.dot(log_ret.cov() * 252, weights)))
-
-        if vol_arr[ind] == 0:
-            sharpe_arr[ind] = np.nan
-        else:
-            sharpe_arr[ind] = ret_arr[ind] / vol_arr[ind]
-
-    # pick best Sharpe
-    Optimal_index_point = np.nanargmax(sharpe_arr)
-    Max_Portfolio_Sharpe_Ratio = sharpe_arr[Optimal_index_point]
-    Optimal_weight_distribution = all_weights[Optimal_index_point, :]
-    max_sr_ret = ret_arr[Optimal_index_point]
-    max_sr_vol = vol_arr[Optimal_index_point]
-
-    st.write(f'Optimal Sharpe Ratio: {Max_Portfolio_Sharpe_Ratio}')
-    st.write(f'Optimal weight distribution for securities code {securities_codes} is: {Optimal_weight_distribution}')
-    st.write(f'Optimal Portfolio Return is {max_sr_ret}')
-    st.write(f'Optimal Portfolio Volatility is {max_sr_vol}')
+    idx = np.nanargmax(sharpe_arr)
+    max_sr, opt_w, max_ret, max_vol = sharpe_arr[idx], all_weights[idx], ret_arr[idx], vol_arr[idx]
+    st.write(f'Optimal Sharpe Ratio: {max_sr:.4f}')
+    st.write(f'Optimal weight distribution for {securities_codes}: {opt_w}')
+    st.write(f'Optimal Portfolio Return: {max_ret:.6f}')
+    st.write(f'Optimal Portfolio Volatility: {max_vol:.6f}')
 
     fig_eff, ax_eff = plt.subplots(figsize=(12, 8))
-    scatter = ax_eff.scatter(vol_arr, ret_arr, c=sharpe_arr, cmap='plasma')
-    fig_eff.colorbar(scatter, label='Sharpe Ratio')
-
-    ax_eff.set_xlabel('Volatility')
-    ax_eff.set_ylabel('Return')
-    ax_eff.set_title('Efficient Frontier')
-
-    # mark optimal point
-    ax_eff.scatter(max_sr_vol, max_sr_ret, c='red', s=50, edgecolors='black')
-
-    st.pyplot(fig_eff)
-    plt.close(fig_eff)
-
+    sc = ax_eff.scatter(vol_arr, ret_arr, c=sharpe_arr, cmap='plasma')
+    fig_eff.colorbar(sc, label='Sharpe Ratio')
+    ax_eff.set_xlabel('Volatility'); ax_eff.set_ylabel('Return'); ax_eff.set_title('Efficient Frontier')
+    ax_eff.scatter(max_vol, max_ret, c='red', s=50, edgecolors='black')
+    st.pyplot(fig_eff); plt.close(fig_eff)
 else:
     st.write("Need at least 2 securities with valid Close prices to build an efficient frontier.")
