@@ -270,6 +270,7 @@ else:
     st.write("Not enough data to compute Sharpe Ratio.")
 
 st.subheader('Portfolio Optimization (Efficient Frontier)')
+
 # Build close matrix
 Stocks_com = pd.DataFrame()
 for code in securities_codes:
@@ -278,30 +279,70 @@ for code in securities_codes:
         Stocks_com[f'{code}_close'] = data_code['Close'].reset_index(drop=True)
 
 if Stocks_com.shape[1] >= 2:
-    log_ret = np.log(Stocks_com / Stocks_com.shift(1))
+    log_ret = np.log(Stocks_com / Stocks_com.shift(1)).dropna()
+    if log_ret.empty:
+        st.warning("Not enough overlapping data to optimize.")
+        st.stop()
+
+    np.random.seed(42)  # reproducible samples
+    n_assets = Stocks_com.shape[1]
     num_ports = 15000
-    all_weights = np.zeros((num_ports, Stocks_com.shape[1]))
-    ret_arr = np.zeros(num_ports); vol_arr = np.zeros(num_ports); sharpe_arr = np.zeros(num_ports)
+
+    all_weights = np.zeros((num_ports, n_assets))
+    ret_arr = np.zeros(num_ports)
+    vol_arr = np.zeros(num_ports)
+    sharpe_arr = np.full(num_ports, np.nan)
+
+    mu = log_ret.mean() * 252
+    cov = log_ret.cov() * 252
 
     for i in range(num_ports):
-        w = np.random.random(Stocks_com.shape[1]); w /= w.sum()
-        all_weights[i, :] = w
-        ret_arr[i] = np.sum((log_ret.mean() * w) * 252)
-        vol_arr[i] = np.sqrt(np.dot(w.T, np.dot(log_ret.cov() * 252, w)))
-        sharpe_arr[i] = np.nan if vol_arr[i] == 0 else ret_arr[i] / vol_arr[i]
+        w = np.random.random(n_assets)
+        w /= w.sum()
+        all_weights[i] = w
+
+        port_ret = np.sum(mu.values * w)
+        port_vol = np.sqrt(np.dot(w.T, np.dot(cov.values, w)))
+        ret_arr[i] = port_ret
+        vol_arr[i] = port_vol
+        if port_vol > 0:
+            sharpe_arr[i] = port_ret / port_vol
+
+    if np.all(np.isnan(sharpe_arr)):
+        st.warning("Could not compute a valid Sharpe ratio (all NaN).")
+        st.stop()
 
     idx = np.nanargmax(sharpe_arr)
-    max_sr, opt_w, max_ret, max_vol = sharpe_arr[idx], all_weights[idx], ret_arr[idx], vol_arr[idx]
-    st.write(f'Optimal Sharpe Ratio: {max_sr:.4f}')
-    st.write(f'Optimal weight distribution for {securities_codes}: {opt_w}')
-    st.write(f'Optimal Portfolio Return: {max_ret:.6f}')
-    st.write(f'Optimal Portfolio Volatility: {max_vol:.6f}')
+    opt_w = all_weights[idx].copy()
 
+    # numerical hygiene: clip and renormalize
+    opt_w = np.clip(opt_w, 0, 1)
+    opt_w /= opt_w.sum()
+
+    max_sr, max_ret, max_vol = sharpe_arr[idx], ret_arr[idx], vol_arr[idx]
+
+    # Pretty output as a table
+    tickers = [c for c in securities_codes]
+    weights_df = pd.DataFrame({"Security": tickers, "Optimal Weight": opt_w})
+    weights_df["Optimal Weight"] = (weights_df["Optimal Weight"] * 100).round(2)
+    st.write(f"**Optimal Sharpe Ratio:** {max_sr:.4f}")
+    st.write(f"**Optimal Portfolio Return:** {max_ret:.6f}")
+    st.write(f"**Optimal Portfolio Volatility:** {max_vol:.6f}")
+    st.dataframe(weights_df, use_container_width=True)
+
+    # Efficient frontier plot
+    import matplotlib.pyplot as plt
     fig_eff, ax_eff = plt.subplots(figsize=(12, 8))
     sc = ax_eff.scatter(vol_arr, ret_arr, c=sharpe_arr, cmap='plasma')
     fig_eff.colorbar(sc, label='Sharpe Ratio')
-    ax_eff.set_xlabel('Volatility'); ax_eff.set_ylabel('Return'); ax_eff.set_title('Efficient Frontier')
-    ax_eff.scatter(max_vol, max_ret, c='red', s=50, edgecolors='black')
-    st.pyplot(fig_eff); plt.close(fig_eff)
+    ax_eff.set_xlabel('Volatility')
+    ax_eff.set_ylabel('Return')
+    ax_eff.set_title('Efficient Frontier')
+
+    # mark optimum
+    ax_eff.scatter(max_vol, max_ret, c='red', s=60, edgecolors='black', zorder=3)
+    st.pyplot(fig_eff)
+    plt.close(fig_eff)
 else:
-    st.write("Need at least 2 securities with valid Close prices to build an efficient frontier.")
+    st.info("Need at least 2 securities with valid Close prices to build an efficient frontier.")
+
